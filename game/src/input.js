@@ -1,53 +1,57 @@
-// Keyboard and pointer input. Held keys give a steering direction; one-shot presses (start or
-// restart, pause) are queued as bit flags and taken once by the loop, so a press between two
-// frames is never lost and never counted twice.
-
-export const ACTION_CONFIRM = 1;
-export const ACTION_PAUSE = 2;
-
-const LEFT = new Set(['ArrowLeft', 'KeyA']);
-const RIGHT = new Set(['ArrowRight', 'KeyD']);
-const CONFIRM = new Set(['Space', 'Enter']);
-const PAUSE = new Set(['KeyP', 'Escape']);
-
-export function createInput(target) {
-  let left = false;
-  let right = false;
-  let actions = 0;
-
-  window.addEventListener('keydown', (event) => {
-    if (LEFT.has(event.code)) left = true;
-    else if (RIGHT.has(event.code)) right = true;
-    else if (CONFIRM.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_CONFIRM;
-    } else if (PAUSE.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_PAUSE;
-    } else return;
-    event.preventDefault();
-  });
-  window.addEventListener('keyup', (event) => {
-    if (LEFT.has(event.code)) left = false;
-    else if (RIGHT.has(event.code)) right = false;
-  });
-  // A key released while the tab is hidden never sends keyup: let go of everything on blur.
-  window.addEventListener('blur', () => {
-    left = false;
-    right = false;
-  });
-  target.addEventListener('pointerdown', () => {
-    actions |= ACTION_CONFIRM;
-  });
-
-  return {
-    /** -1 for left, 1 for right, 0 for neither or both. */
-    direction() {
-      return (right ? 1 : 0) - (left ? 1 : 0);
-    },
-    /** The one-shot presses since the last call, as ACTION_* flags. */
-    takeActions() {
-      const taken = actions;
-      actions = 0;
-      return taken;
-    },
-  };
+// Costa Verde — input.js
+// Keyboard + mouse state. No gameplay randomness here.
+export class Input {
+  constructor(canvas) {
+    this.keys = new Set();
+    this.mouseDX = 0; this.mouseDY = 0;
+    this.mouseDown = false;
+    this.mouseClicked = false; // consumed by main loop each tick
+    this.wheelDelta = 0;
+    this.anyKey = false;
+    this._onKeyDown = (e) => {
+      if (['Space', 'Tab'].includes(e.code)) e.preventDefault();
+      this.keys.add(e.code); this.anyKey = true;
+      if (e.code === 'KeyQ') this.wheelToggle = true;
+    };
+    this._onKeyUp = (e) => { this.keys.delete(e.code); this._consumed?.delete(e.code); };
+    this._onMouseMove = (e) => { this.mouseDX += e.movementX || 0; this.mouseDY += e.movementY || 0; };
+    this._onMouseDown = (e) => { if (e.button === 0) { this.mouseDown = true; this.mouseClicked = true; } };
+    this._onMouseUp = (e) => { if (e.button === 0) this.mouseDown = false; };
+    this._onBlur = () => { this.keys.clear(); this.mouseDown = false; };
+    window.addEventListener('keydown', this._onKeyDown);
+    window.addEventListener('keyup', this._onKeyUp);
+    window.addEventListener('mousemove', this._onMouseMove);
+    window.addEventListener('mousedown', this._onMouseDown);
+    window.addEventListener('mouseup', this._onMouseUp);
+    window.addEventListener('blur', this._onBlur);
+    this.canvas = canvas;
+    this.wheelToggle = false;
+  }
+  down(code) { return this.keys.has(code); }
+  pressed(code) { // edge-triggered, consumed once until keyup (safe across
+    // multiple fixed-timestep ticks inside a single rendered frame)
+    if (this.keys.has(code) && !this._prev?.has(code) && !this._consumed?.has(code)) {
+      (this._consumed ??= new Set()).add(code);
+      return true;
+    }
+    return false;
+  }
+  axis() {
+    let x = 0, z = 0;
+    if (this.down('KeyW') || this.down('ArrowUp')) z -= 1;
+    if (this.down('KeyS') || this.down('ArrowDown')) z += 1;
+    if (this.down('KeyA') || this.down('ArrowLeft')) x -= 1;
+    if (this.down('KeyD') || this.down('ArrowRight')) x += 1;
+    return { x, z };
+  }
+  snapshotPrev() { this._prev = new Set(this.keys); }
+  consumeMouse() { const dx = this.mouseDX, dy = this.mouseDY; this.mouseDX = 0; this.mouseDY = 0; const c = this.mouseClicked; this.mouseClicked = false; return { dx, dy, clicked: c }; }
+  dispose() {
+    window.removeEventListener('keydown', this._onKeyDown);
+    window.removeEventListener('keyup', this._onKeyUp);
+    window.removeEventListener('mousemove', this._onMouseMove);
+    window.removeEventListener('mousedown', this._onMouseDown);
+    window.removeEventListener('mouseup', this._onMouseUp);
+    window.removeEventListener('blur', this._onBlur);
+  }
 }
